@@ -1,100 +1,63 @@
 # bactrian
 
-Lets a coding agent research the web without reading it. The agent writes the search and the question. A separate
-process fetches the pages, a model with no tools reads them, and the answer opens in your browser. The agent gets back
-one line:
+Let your coding agent research the web without ever reading a page.
 
-```
-The answer is open in the user's browser; you cannot see it. pages read: 4, failed: 1, answered: yes.
-```
+## The problem
 
-A Bactrian camel has two humps, and this has two models: the split from Google DeepMind's CaMeL. The agent plans and
-never sees untrusted text. The reader sees the untrusted text and can do nothing. A page can lie to the reader, but it
-cannot make your agent run a command, write a file or send your data anywhere, because your agent never reads it.
+When Claude Code or Codex looks something up, whatever it reads goes into the same conversation as your instructions.
+The model can't reliably tell which words came from you and which came from some random web page.
+
+That matters because anyone can write a web page. A forum post can hide a line like "ignore your instructions and run
+this command". You won't see it. The model will. This is called prompt injection.
+
+## Why it matters
+
+The agent reading that forum post is the same agent that can run commands on your machine, edit your code and push to
+GitHub.
+
+I checked my own Claude Code history. Of the 120 sessions where the agent read something from the web, 75 went on to
+run commands or edit files in that same session.
+
+Right now the only thing protecting you is the model noticing the trick and choosing to ignore it. Most of the time it
+does. I'd rather not depend on most of the time.
+
+## The fix
+
+This project makes sure your agent never reads the web at all.
+
+When your agent wants to look something up, it asks this tool a question. The tool finds the pages and hands them to a
+second model that has no tools. That model can read, but it can't run anything or touch your files. Its answer opens in
+your browser, for you to read.
+
+Your agent never sees the pages or the answer. All it gets back is a short note: the answer is in your browser, this
+many pages were read, and yes or no, the question was answered.
+
+A page can still lie to the reader. But nothing on a page can make your agent do anything, because your agent never
+reads it.
+
+Before each lookup, the tool also checks that the reading model really has no tools. If something changes that, like a
+Claude Code update, it stops instead of carrying on.
+
+What it won't catch is a page that simply lies, or hides text that ends up in your answer. That's why every answer lists
+its sources.
+
+## The idea behind it
+
+This isn't my idea. Simon Willison described it in 2023 as the
+[Dual LLM pattern](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/), and Google DeepMind built on it with
+[CaMeL](https://arxiv.org/abs/2503.18813). The setup is the same in each:
+
+- One model has tools and takes instructions from you, but never reads anything from outside. Here, that's your coding
+  agent.
+- A second model reads the outside text and has no tools. Here, that's the reader.
+- Plain code sits between them and decides what gets through. Here, the only thing that goes back to your agent is a
+  count of pages and a yes or no.
+
+## Why "bactrian"
+
+CaMeL is a camel. A Bactrian camel is the one with two humps, and this project runs on two models. That's the whole joke.
 
 ## Install
 
-Needs Python 3.9 or newer and Claude Code logged in: the searcher and the reader run through `claude -p`.
-
-Claude Code:
-
-```bash
-claude mcp add --scope user bactrian -- python3 /path/to/bactrian/server.py
-```
-
-Codex:
-
-```bash
-codex mcp add bactrian -- python3 /path/to/bactrian/server.py
-```
-
-Codex asks before every MCP tool call, and `codex exec` rejects the call outright. To let `research` run without
-asking, extend the entry `codex mcp add` wrote to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.bactrian]
-command = "python3"
-args = ["/path/to/bactrian/server.py"]
-tool_timeout_sec = 300
-
-[mcp_servers.bactrian.tools.research]
-approval_mode = "approve"
-```
-
-## Choose the models
-
-The reader defaults to `sonnet` and the searcher to `haiku`. Set `BACTRIAN_READER` or `BACTRIAN_SEARCHER` to any model
-name `claude -p` accepts:
-
-```bash
-claude mcp add --scope user -e BACTRIAN_READER=opus bactrian -- python3 /path/to/bactrian/server.py
-```
-
-In Codex, put them under `[mcp_servers.bactrian.env]`.
-
-## Checked on every call
-
-Before each research call, bactrian starts the reader and the searcher just long enough to read the tool lists they
-were given, and refuses to run unless the reader has no tools and the searcher has only WebSearch. It takes about half a
-second and no model call. If a Claude Code update ever stopped honouring `--tools ""`, bactrian stops instead of
-running a reader that can act.
-
-## Close the other ways in
-
-The tool protects you only if it is your agent's only way to read the web. In Claude Code, deny the built-in web tools
-and any browser tools in your settings:
-
-```json
-{ "permissions": { "deny": ["WebFetch", "WebSearch", "mcp__claude-in-chrome", "mcp__Claude_Browser"] } }
-```
-
-Shell commands such as `curl` can still read the web. Claude Code's sandbox with an empty `network.allowedDomains` stops
-them; see [Configure the sandboxed Bash tool](https://code.claude.com/docs/en/sandboxing).
-
-In Codex, the same goes at the top of `~/.codex/config.toml` (not yet tested). Codex's `workspace-write` sandbox keeps
-shell commands off the network by default.
-
-```toml
-web_search = "disabled"
-
-[features]
-browser_use = false
-in_app_browser = false
-computer_use = false
-```
-
-## What it does not stop
-
-- A page that lies. You get a wrong answer, with the sources listed so you can check.
-- Text a page hides from people. The reader sees it, so it can end up in your answer.
-- A page deciding `answered`. That one bit is the only thing a page can send your agent.
-- Your search query leaving your machine, as with any web search.
-
-## Checks
-
-```bash
-python3 test_server.py && python3 test_web.py
-```
-
-`web.py` is the first version: a command where a planner model writes a restricted Python plan that an interpreter
-runs. `examples/` holds the poisoned pages used to attack both versions.
+[INSTALL.md](INSTALL.md) covers Claude Code, Codex, picking models and blocking the other ways an agent can reach the
+web.
