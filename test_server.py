@@ -79,6 +79,28 @@ def test_only_web_addresses_are_fetched():
     assert visits == ["/a"] and shown[0][2] == [f"{SITE}/a"], (visits, shown)
 
 
+def test_given_addresses_skip_the_search():
+    searched = []
+    research({"question": "q", "urls": [f"{SITE}/a"], "search": "anything"}, find=lambda query: searched.append(query) or [])
+    assert searched == [] and visits == ["/a"], (searched, visits)
+
+
+def test_research_is_refused_when_a_model_would_start_with_other_tools():
+    real = llm.started_with
+    try:
+        for reader_tools, searcher_tools, refused in (
+            ([], ["WebSearch"], False),
+            (["Bash"], ["WebSearch"], True),
+            ([], ["WebSearch", "WebFetch"], True),
+            (None, ["WebSearch"], True),
+        ):
+            llm.started_with = lambda cmd: searcher_tools if "WebSearch" in cmd else reader_tools
+            problem = llm.isolation_problem()
+            assert bool(problem) == refused, (reader_tools, searcher_tools, problem)
+    finally:
+        llm.started_with = real
+
+
 def test_a_single_address_given_as_text_is_read():
     told = research({"question": "q", "urls": f"{SITE}/a"})
     assert visits == ["/a"] and "pages read: 1" in told, (visits, told)

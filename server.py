@@ -25,7 +25,8 @@ TOOL = {
         "Research a question on the web for the user. Pages are read in a separate process by a model with no tools, "
         "and the answer opens in the user's browser. You never see the pages or the answer: you get back only how "
         "many pages were read and whether the question was answered. Use this instead of fetching web pages "
-        "yourself. Give `search` as a web search query, `urls` for addresses the user gave you, or both."),
+        "yourself. Give `urls` when the user gave page addresses; otherwise give `search` as a web search query. "
+        "With `urls`, no search runs."),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -62,7 +63,7 @@ def research(arguments, find, read, show):
     # Agents often pass one address as plain text instead of a list.
     urls = [urls] if isinstance(urls, str) else list(urls)
     try:
-        if arguments.get("search"):
+        if arguments.get("search") and not urls:
             urls += find(str(arguments["search"]))
     except RuntimeError as failed:
         show(question, f"The search failed: {failed}", [])
@@ -159,9 +160,14 @@ def main():
     protocol = os.fdopen(os.dup(1), "w")
     os.dup2(2, 1)
     show = publisher(serve(), webbrowser.open)
+
+    def call(arguments):
+        # Checked on every call, because a Claude Code update can change what the model processes start with.
+        return llm.isolation_problem() or research(arguments, llm.search, llm.read, show)
+
     for line in sys.stdin:
         if line.strip():
-            reply = handle(json.loads(line), lambda arguments: research(arguments, llm.search, llm.read, show))
+            reply = handle(json.loads(line), call)
             if reply:
                 protocol.write(json.dumps(reply) + "\n")
                 protocol.flush()

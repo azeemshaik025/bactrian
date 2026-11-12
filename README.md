@@ -41,6 +41,24 @@ tool_timeout_sec = 300
 approval_mode = "approve"
 ```
 
+## Choose the models
+
+The reader defaults to `sonnet` and the searcher to `haiku`. Set `BACTRIAN_READER` or `BACTRIAN_SEARCHER` to any model
+name `claude -p` accepts:
+
+```bash
+claude mcp add --scope user -e BACTRIAN_READER=opus bactrian -- python3 /path/to/bactrian/server.py
+```
+
+In Codex, put them under `[mcp_servers.bactrian.env]`.
+
+## Checked on every call
+
+Before each research call, bactrian starts the reader and the searcher just long enough to read the tool lists they
+were given, and refuses to run unless the reader has no tools and the searcher has only WebSearch. It takes about half a
+second and no model call. If a Claude Code update ever stopped honouring `--tools ""`, bactrian stops instead of
+running a reader that can act.
+
 ## Close the other ways in
 
 The tool protects you only if it is your agent's only way to read the web. In Claude Code, deny the built-in web tools
