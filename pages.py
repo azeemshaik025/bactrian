@@ -11,9 +11,27 @@ from camel import PolicyError
 # Long articles get cut at these limits.
 MAX_BYTES = 1_000_000
 MAX_CHARS = 30_000
-INLINE_TAGS = set(
-    "a abbr b cite code em i kbd mark q s small span strong sub sup time u var".split()
-)
+INLINE_TAGS = {
+    "a",
+    "abbr",
+    "b",
+    "cite",
+    "code",
+    "em",
+    "i",
+    "kbd",
+    "mark",
+    "q",
+    "s",
+    "small",
+    "span",
+    "strong",
+    "sub",
+    "sup",
+    "time",
+    "u",
+    "var",
+}
 HIDDEN_TAGS = {"script", "style", "noscript", "template"}
 
 
@@ -40,8 +58,13 @@ class PageText(HTMLParser):
 
 def html_to_text(html: str) -> str:
     parser = PageText()
-    parser.feed(html)
-    parser.close()
+    try:
+        parser.feed(html)
+        parser.close()
+    except (AssertionError, NotImplementedError):
+        # Older Pythons give up on some broken markup, such as a bad "<![" section, and raise.
+        # Keep the text read before it.
+        pass
     return " ".join("".join(parser.parts).split())[:MAX_CHARS]
 
 
