@@ -1,8 +1,8 @@
-"""An MCP server that researches the web for your agent and shows the answer only to you.
+"""An MCP server that runs your agent's research plan the CaMeL way and shows the results to you.
 
-The agent writes the question and a link or a search. This process downloads the pages, the
-scribe reads them, and the answer opens in your browser from a page that works once. The agent
-gets back one line of counts.
+The agent writes a short plan as code. The interpreter runs it: plain code downloads pages, the
+scout searches and the scribe reads, and whatever the plan shows opens in your browser from a page
+that works once. The agent gets back only whether the plan ran, or the line where it stopped.
 """
 
 from __future__ import annotations
@@ -21,39 +21,48 @@ from typing import Callable
 
 import llm
 import pages
-from camel import PolicyError
+from camel import USER, Interpreter, PlanError, PolicyError, Tagged, ToolError
 
 MAX_PAGES = 5
+FOUND = frozenset({"search"})
+WEB = frozenset({"web"})
+DESCRIPTION = """\
+Research the web for the user by writing a short plan. A separate model with no tools reads the
+pages, and whatever the plan shows opens in the user's browser. You never see search results,
+pages or answers: you get back only whether the plan ran, or the line where it stopped and why.
+Use this instead of fetching web pages yourself, and don't ask the user to paste the answer back.
+
+The plan is a small subset of Python. Statements: assignment to one name, and bare calls.
+Expressions: string constants, names, list literals and calls. Nothing else exists: no imports,
+if, loops, operators, f-strings, attributes, indexing or keyword arguments.
+
+Functions:
+  search(query)                web addresses for a query written in the plan
+  fetch(urls)                  the text of up to 5 pages, from an address or a list of addresses
+                               written in the plan or returned by search
+  ask_scribe(pages, question)  the scribe's answer to the question, from those pages
+  show(text)                   puts text on the user's page
+
+When the user gave page addresses, fetch them and skip search. For example:
+
+links = search("deepmind camel prompt injection")
+pages = fetch(links)
+show(ask_scribe(pages, "How does CaMeL stop prompt injection?"))"""
 TOOL = {
     "name": "research",
-    "description": (
-        "Research a question on the web for the user. Pages are read in a separate process by a "
-        "model with no tools, and the answer opens in the user's browser. You never see the pages "
-        "or the answer: you get back only how many pages were read and whether the question was "
-        "answered. Use this instead of fetching web pages yourself. Give `urls` when the user "
-        "gave page addresses; otherwise give `search` as a web search query. With `urls`, no "
-        "search runs."
-    ),
+    "description": DESCRIPTION,
     "inputSchema": {
         "type": "object",
-        "properties": {
-            "question": {"type": "string", "description": "What the user wants to know."},
-            "search": {"type": "string", "description": "A web search query."},
-            "urls": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Addresses of pages to read.",
-            },
-        },
-        "required": ["question"],
+        "properties": {"plan": {"type": "string", "description": "The plan, as code."}},
+        "required": ["plan"],
     },
-    # Read-only is true, and it lets Codex run the tool without asking each time.
     "annotations": {"readOnlyHint": True, "openWorldHint": True},
 }
 STYLE = """
 body { font: 17px/1.6 system-ui, sans-serif; max-width: 44rem; margin: 3rem auto; padding: 0 1rem;
        color: #1f2328; background: #fff; }
 .answer { white-space: pre-wrap; }
+.answer + .answer { margin-top: 1.5rem; }
 .note { color: #59636e; font-size: 14px; border-top: 1px solid #d1d9e0; padding-top: 1rem; }
 a { color: #0969da; word-break: break-all; }
 @media (prefers-color-scheme: dark) {
@@ -64,6 +73,28 @@ a { color: #0969da; word-break: break-all; }
 """
 
 
+def written_in_the_plan(query: Tagged) -> None:
+    if query.sources != USER or not isinstance(query.value, str):
+        raise PolicyError("search only takes one query written in the plan")
+
+
+def written_or_found(urls: Tagged) -> None:
+    # A page, or the scribe's answer about one, can name any address. Search results come from
+    # the scout's first search, which runs before it has read anything.
+    if not urls.sources <= USER | FOUND:
+        raise PolicyError("fetch only takes addresses written in the plan or found by search")
+
+
+POLICIES = {"search": [written_in_the_plan], "fetch": [written_or_found]}
+
+
+def flat(value: object) -> list:
+    """A value as one flat list, so a plan can pass an item, a list or a list of lists."""
+    if isinstance(value, list):
+        return [item for part in value for item in flat(part)]
+    return [value]
+
+
 def fetch_text(url: str) -> str | None:
     try:
         return pages.html_to_text(pages.download(url))
@@ -72,52 +103,77 @@ def fetch_text(url: str) -> str | None:
 
 
 def research(
-    arguments: dict,
+    plan: str,
     search: Callable[[str], list[str]],
     answer: Callable[[str, list[str]], dict],
-    show: Callable[[str, str, list[str]], None],
+    show: Callable[[list[str], list[str], list[str]], None],
 ) -> str:
-    """Run one research call and return the only text the agent gets: counts, never page text."""
-    question = str(arguments.get("question", ""))
-    urls = arguments.get("urls") or []
-    # Agents often pass one address as plain text instead of a list.
-    urls = [urls] if isinstance(urls, str) else list(urls)
+    """Run one plan and return the only text the agent gets: never search results or page text."""
+    questions: list[str] = []
+    texts: list[str] = []
+    sources: list[str] = []
+
+    def search_tool(query: Tagged) -> Tagged:
+        try:
+            return Tagged(search(query.value), FOUND)
+        except RuntimeError as failed:
+            texts.append(f"The search failed: {failed}")
+            raise ToolError("the search failed") from None
+
+    def fetch(urls: Tagged) -> Tagged:
+        wanted = [url for url in dict.fromkeys(flat(urls.value)) if pages.is_web_address(url)]
+        wanted = wanted[:MAX_PAGES]
+        with ThreadPoolExecutor(MAX_PAGES) as pool:
+            read = [(url, text) for url, text in zip(wanted, pool.map(fetch_text, wanted)) if text]
+        if not read:
+            raise ToolError("no page could be read")
+        sources.extend(url for url, _ in read if url not in sources)
+        return Tagged([text for _, text in read], WEB)
+
+    def ask_scribe(data: Tagged, question: Tagged) -> Tagged:
+        questions.append(str(question.value))
+        try:
+            result = answer(str(question.value), [str(text) for text in flat(data.value)])
+        except RuntimeError as failed:
+            texts.append(f"The scribe failed: {failed}")
+            raise ToolError("the scribe failed") from None
+        if result.get("answered") is not True:
+            texts.append(str(result.get("answer", "")))
+            raise ToolError("the scribe could not answer from these pages")
+        return Tagged(str(result.get("answer", "")), data.sources | question.sources)
+
+    def show_text(text: Tagged) -> Tagged:
+        texts.append("\n\n".join(map(str, flat(text.value))))
+        return Tagged(None, USER)
+
+    tools = {"search": search_tool, "fetch": fetch, "ask_scribe": ask_scribe, "show": show_text}
     try:
-        if arguments.get("search") and not urls:
-            urls += search(str(arguments["search"]))
-    except RuntimeError as failed:
-        show(question, f"The search failed: {failed}", [])
-        return "The search failed; the details are open in the user's browser."
-    urls = [url for url in dict.fromkeys(urls) if pages.is_web_address(url)][:MAX_PAGES]
-    with ThreadPoolExecutor(MAX_PAGES) as pool:
-        fetched = [(url, text) for url, text in zip(urls, pool.map(fetch_text, urls)) if text]
-    if not fetched:
-        return f"No page could be read ({len(urls)} tried). Nothing was shown to the user."
-    sources = [url for url, _ in fetched]
-    try:
-        result = answer(question, [text for _, text in fetched])
-    except RuntimeError as failed:
-        show(question, f"The scribe failed: {failed}", sources)
-        return "The scribe failed; the details are open in the user's browser."
-    show(question, str(result.get("answer", "")), sources)
-    answered = "yes" if result.get("answered") is True else "no"
-    return (
-        "The answer is open in the user's browser; you cannot see it. "
-        f"pages read: {len(fetched)}, failed: {len(urls) - len(fetched)}, answered: {answered}."
+        Interpreter(tools, POLICIES).run(plan)
+        told = "The plan ran."
+    except SyntaxError as wrong:
+        told = f"The plan stopped at line {wrong.lineno}: {wrong.msg}."
+    except (PlanError, PolicyError, ToolError) as stopped:
+        told = f"The plan stopped at {stopped}."
+    if not texts:
+        return f"{told} Nothing was shown to the user."
+    show(questions, texts, sources)
+    return f"{told} A page for the user is open in their browser; you cannot see it."
+
+
+def answer_page(questions: list[str], texts: list[str], sources: list[str]) -> str:
+    title = html.escape(pages.clean(" / ".join(questions) or "Research"))
+    answers = "".join(
+        f'<div class="answer">{html.escape(pages.clean(text))}</div>' for text in texts
     )
-
-
-def answer_page(question: str, answer: str, sources: list[str]) -> str:
     links = "".join(
         f'<li><a href="{html.escape(url)}">{html.escape(url)}</a></li>' for url in sources
     )
     return (
-        f'<!doctype html><meta charset="utf-8"><title>{html.escape(question)}</title>'
-        f"<style>{STYLE}</style><h1>{html.escape(question)}</h1>"
-        f'<div class="answer">{html.escape(pages.clean(answer))}</div>'
+        f'<!doctype html><meta charset="utf-8"><title>{title}</title>'
+        f"<style>{STYLE}</style><h1>{title}</h1>{answers}"
         f"<h2>Sources</h2><ol>{links}</ol>"
         '<p class="note">Written from these pages by a model with no tools. Your agent has not '
-        "seen this answer. This page opens once: save it if you want to keep it.</p>"
+        "seen this page. It opens once: save it if you want to keep it.</p>"
     )
 
 
@@ -149,10 +205,10 @@ def start_page_server() -> http.server.ThreadingHTTPServer:
 
 def publisher(
     page_server: http.server.ThreadingHTTPServer, open_browser: Callable[[str], object]
-) -> Callable[[str, str, list[str]], None]:
-    def show(question: str, answer: str, sources: list[str]) -> None:
+) -> Callable[[list[str], list[str], list[str]], None]:
+    def show(questions: list[str], texts: list[str], sources: list[str]) -> None:
         token = secrets.token_urlsafe(16)
-        AnswerPage.unopened[token] = answer_page(question, answer, sources).encode()
+        AnswerPage.unopened[token] = answer_page(questions, texts, sources).encode()
         open_browser(f"http://127.0.0.1:{page_server.server_port}/{token}")
 
     return show
@@ -207,7 +263,8 @@ def main() -> None:
 
     def call(arguments: dict) -> str:
         # Checked every call: a Claude Code update can change what the models start with.
-        return llm.isolation_problem() or research(arguments, llm.search, llm.answer, show)
+        plan = str(arguments.get("plan", ""))
+        return llm.isolation_problem() or research(plan, llm.search, llm.answer, show)
 
     for line in sys.stdin:
         if line.strip():

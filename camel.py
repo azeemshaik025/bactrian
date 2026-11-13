@@ -6,6 +6,7 @@ Every value remembers where it came from, and policies check that before a tool 
 from __future__ import annotations
 
 import ast
+import inspect
 from dataclasses import dataclass
 from typing import Callable
 
@@ -16,6 +17,10 @@ class PlanError(Exception):
 
 class PolicyError(Exception):
     """A tool would use a value that came from somewhere it must not trust."""
+
+
+class ToolError(Exception):
+    """A tool failed, with a reason that is safe for the planner to read."""
 
 
 @dataclass(frozen=True)
@@ -57,12 +62,15 @@ class Interpreter:
                 raise PlanError(f"{where}: assign to one plain name")
             if isinstance(node, ast.Expr) and not isinstance(node.value, ast.Call):
                 raise PlanError(f"{where}: a bare expression must be a call")
-            if isinstance(node, ast.Call) and not (
-                isinstance(node.func, ast.Name) and node.func.id in self.tools
-            ):
-                raise PlanError(
-                    f"{where}: only these functions can be called: {', '.join(self.tools)}"
-                )
+            if isinstance(node, ast.Call):
+                if not (isinstance(node.func, ast.Name) and node.func.id in self.tools):
+                    raise PlanError(
+                        f"{where}: only these functions can be called: {', '.join(self.tools)}"
+                    )
+                try:
+                    inspect.signature(self.tools[node.func.id]).bind(*node.args)
+                except TypeError as wrong:
+                    raise PlanError(f"{where}: {node.func.id}: {wrong}") from None
             if isinstance(node, ast.Constant) and not isinstance(node.value, str):
                 raise PlanError(f"{where}: the only constants are strings")
         return tree
@@ -86,6 +94,9 @@ class Interpreter:
             sources = frozenset().union(*(item.sources for item in items))
             return Tagged([item.value for item in items], sources)
         args = [self.evaluate(arg, names) for arg in node.args]
-        for policy in self.policies.get(node.func.id, []):
-            policy(*args)
-        return self.tools[node.func.id](*args)
+        try:
+            for policy in self.policies.get(node.func.id, []):
+                policy(*args)
+            return self.tools[node.func.id](*args)
+        except (PolicyError, ToolError) as stopped:
+            raise type(stopped)(f"line {node.lineno}: {stopped}") from None
