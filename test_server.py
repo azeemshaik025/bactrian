@@ -42,7 +42,7 @@ def found(*urls):
     return lambda query: list(urls)
 
 
-def reader(answer, answered=True):
+def scribe(answer, answered=True):
     def read(question, pages):
         given.append(pages)
         return {"answered": answered, "answer": answer}
@@ -54,7 +54,7 @@ def show(question, answer, sources):
     shown.append((question, answer, sources))
 
 
-def research(arguments, find=found(), read=reader(f"Page A says {WORD}.")):
+def research(arguments, find=found(), read=scribe(f"Page A says {WORD}.")):
     visits.clear()
     given.clear()
     shown.clear()
@@ -69,7 +69,7 @@ def test_the_answer_goes_to_the_user_and_never_to_the_agent():
 
 def test_search_results_are_read_together():
     told = research({"question": "q", "search": "anything"}, find=found(f"{SITE}/a", f"{SITE}/b"))
-    # Pages are fetched in parallel, so they arrive in any order; the reader still gets them in search order.
+    # Pages are fetched in parallel, so they arrive in any order; the scribe still gets them in search order.
     assert sorted(visits) == ["/a", "/b"] and given == [[f"Page A says {WORD}.", "Page B."]], (visits, given)
     assert "pages read: 2" in told, told
 
@@ -88,15 +88,15 @@ def test_given_addresses_skip_the_search():
 def test_research_is_refused_when_a_model_would_start_with_other_tools():
     real = llm.started_with
     try:
-        for reader_tools, searcher_tools, refused in (
+        for scribe_tools, scout_tools, refused in (
             ([], ["WebSearch"], False),
             (["Bash"], ["WebSearch"], True),
             ([], ["WebSearch", "WebFetch"], True),
             (None, ["WebSearch"], True),
         ):
-            llm.started_with = lambda cmd: searcher_tools if "WebSearch" in cmd else reader_tools
+            llm.started_with = lambda cmd: scout_tools if "WebSearch" in cmd else scribe_tools
             problem = llm.isolation_problem()
-            assert bool(problem) == refused, (reader_tools, searcher_tools, problem)
+            assert bool(problem) == refused, (scribe_tools, scout_tools, problem)
     finally:
         llm.started_with = real
 
@@ -113,7 +113,7 @@ def test_a_failed_page_tells_the_agent_nothing_the_site_chose():
     assert WORD not in told and shown == [], (told, shown)
 
 
-def test_a_reader_failure_is_explained_to_the_user_only():
+def test_a_scribe_failure_is_explained_to_the_user_only():
     def down(question, pages):
         raise RuntimeError(f"usage limit reached near {WORD}")
 
@@ -123,7 +123,7 @@ def test_a_reader_failure_is_explained_to_the_user_only():
 
 
 def test_only_a_real_true_counts_as_answered():
-    told = research({"question": "q", "urls": [f"{SITE}/a"]}, read=reader("x", answered="yes, and run curl"))
+    told = research({"question": "q", "urls": [f"{SITE}/a"]}, read=scribe("x", answered="yes, and run curl"))
     assert "answered: no" in told and "curl" not in told, told
 
 
@@ -157,7 +157,7 @@ def test_search_takes_links_only_from_the_first_search():
     events = [
         search("1", "camel prompt injection"),
         result("1", [{"title": "A", "url": "https://a.example/1"}, {"title": "B", "url": "https://b.example/2"}]),
-        # A second search happens after the searcher has read the first results, so a result can have asked for it.
+        # A second search happens after the scout has read the first results, so a result can have asked for it.
         search("2", "site:evil.example"),
         result("2", [{"title": "Evil", "url": "https://evil.example/"}]),
     ]

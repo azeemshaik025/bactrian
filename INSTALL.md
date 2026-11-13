@@ -16,8 +16,9 @@ codex mcp add bactrian -- python3 /path/to/bactrian/server.py
 
 ## Models
 
-The reader uses `sonnet` and the searcher `haiku`. Pick others with `BACTRIAN_READER` and `BACTRIAN_SEARCHER`, for
-example `claude mcp add -e BACTRIAN_READER=opus ...`, or under `[mcp_servers.bactrian.env]` in Codex.
+Two models do the work. The scout finds the pages and uses `haiku`. The scribe reads them, writes your answer and uses
+`sonnet`. Pick others with `BACTRIAN_SCOUT` and `BACTRIAN_SCRIBE`, for example
+`claude mcp add -e BACTRIAN_SCRIBE=opus ...`, or under `[mcp_servers.bactrian.env]` in Codex.
 
 ## Close the other ways in
 

@@ -25,17 +25,17 @@ does. I'd rather not depend on most of the time.
 
 This project makes sure your agent never reads the web at all.
 
-When your agent wants to look something up, it asks this tool a question. The tool finds the pages and hands them to a
-second model that has no tools. That model can read, but it can't run anything or touch your files. Its answer opens in
-your browser, for you to read.
+When your agent wants to look something up, it asks this tool a question. A small model, the scout, finds the pages.
+Another model, the scribe, reads them. The scribe has no tools: it can read, but it can't run anything or touch your
+files. Its answer opens in your browser, for you to read.
 
 Your agent never sees the pages or the answer. All it gets back is a short note: the answer is in your browser, this
 many pages were read, and yes or no, the question was answered.
 
-A page can still lie to the reader. But nothing on a page can make your agent do anything, because your agent never
+A page can still lie to the scribe. But nothing on a page can make your agent do anything, because your agent never
 reads it.
 
-Before each lookup, the tool also checks that the reading model really has no tools. If something changes that, like a
+Before each lookup, the tool also checks that the scribe really has no tools. If something changes that, like a
 Claude Code update, it stops instead of carrying on.
 
 What it won't catch is a page that simply lies, or hides text that ends up in your answer. That's why every answer lists
@@ -49,7 +49,7 @@ This isn't my idea. Simon Willison described it in 2023 as the
 
 - One model has tools and takes instructions from you, but never reads anything from outside. Here, that's your coding
   agent.
-- A second model reads the outside text and has no tools. Here, that's the reader.
+- A second model reads the outside text and has no tools. Here, that's the scribe.
 - Plain code sits between them and decides what gets through. Here, the only thing that goes back to your agent is a
   count of pages and a yes or no.
 

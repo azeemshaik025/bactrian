@@ -79,8 +79,8 @@ def research(arguments, find, read, show):
     try:
         result = read(question, [text for _, text in pages])
     except RuntimeError as failed:
-        show(question, f"The reader failed: {failed}", sources)
-        return "The reader failed; the details are open in the user's browser."
+        show(question, f"The scribe failed: {failed}", sources)
+        return "The scribe failed; the details are open in the user's browser."
     show(question, str(result.get("answer", "")), sources)
     answered = "yes" if result.get("answered") is True else "no"
     return (f"The answer is open in the user's browser; you cannot see it. "
