@@ -24,7 +24,7 @@ Two models do the work. The scout finds the pages and uses `haiku`. The scribe r
 
 bactrian only helps if it is your agent's only way to the web.
 
-Claude Code, in `~/.claude/settings.json`:
+Claude Code, in `~/.claude/settings.json` for every project, or a project's `.claude/settings.json` for just that one:
 
 ```json
 { "permissions": { "deny": ["WebFetch", "WebSearch", "mcp__claude-in-chrome", "mcp__Claude_Browser"] } }
