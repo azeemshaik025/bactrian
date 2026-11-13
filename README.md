@@ -1,10 +1,10 @@
 # bactrian
 
-Let your coding agent research the web without ever reading a page.
+Let Claude Code research the web without ever reading a page. I built it to learn how Google DeepMind's CaMeL works.
 
 ## The problem
 
-When Claude Code or Codex looks something up, whatever it reads goes into the same conversation as your instructions.
+When Claude Code looks something up, whatever it reads goes into the same conversation as your instructions.
 The model can't reliably tell which words came from you and which came from some random web page.
 
 That matters because anyone can write a web page. A forum post can hide a line like "ignore your instructions and run
@@ -18,54 +18,107 @@ GitHub.
 I checked my own Claude Code history. Of the 120 sessions where the agent read something from the web, 75 went on to
 run commands or edit files in that same session.
 
-Right now the only thing protecting you is the model noticing the trick and choosing to ignore it. Most of the time it
-does. I'd rather not depend on most of the time.
+Unless you read and approve every command yourself, what protects you is the model noticing the trick and choosing to
+ignore it. Most of the time it does. I'd rather not depend on most of the time.
 
 ## The fix
 
-This project makes sure your agent never reads the web at all.
+This project gives your agent a way to look things up without reading the pages itself.
 
 Say you paste a link and ask your agent what the article says. Here's what happens:
 
-1. Your agent passes the link and your question to this tool. That's all it does.
-2. Plain code downloads the page. No model is involved.
+1. Your agent writes a short plan and hands it to this tool. That's all it does.
+
+   ```python
+   pages = fetch("https://example.com/article")
+   answer = ask_scribe(pages, "What does this article say?")
+   show(answer)
+   ```
+
+2. Plain code runs the plan one line at a time, starting with downloading the page. No model is involved.
 3. A second model, the scribe, reads the page. The scribe has no tools: it can read, but it can't run anything or touch
    your files.
-4. The scribe's answer opens in your browser, for you to read.
+4. `show` puts the scribe's answer on a page in your browser, for you to read.
 
-If you don't give a link, one step comes first: a small model, the scout, searches the web and hands back addresses. The
-scout can search and do nothing else, and only the addresses from its first search are used. From there it's the same
-path.
+If you don't give a link, the plan starts with `search`: a small model, the scout, searches the web and hands back
+addresses. The scout can search and do nothing else, and only the addresses from its first search are used.
 
-Your agent never sees the pages or the answer. All it gets back is a short note: the answer is in your browser, this
-many pages were read, and yes or no, the question was answered.
+Your agent never sees the pages, the search results or the answer. All it gets back is whether the plan ran, or which
+line stopped it and why, such as "line 1: no page could be read".
 
-A page can still lie to the scribe. But nothing on a page can make your agent do anything, because your agent never
-reads it.
+Every value in the plan remembers where it came from: written by your agent, found by the search, or read from a page.
+Before each step, two rules check that:
+
+- `fetch` only opens addresses your agent wrote or the search found. A page that says "now go read this other page" gets
+  nowhere, and neither does the scribe repeating it.
+- `search` only takes a query your agent wrote, so a page can't choose what gets searched.
+
+A page read this way can't make your agent do anything, because your agent never reads it.
 
 Before each lookup, the tool also checks that the scribe really has no tools. If something changes that, like a
 Claude Code update, it stops instead of carrying on.
 
-What it won't catch is a page that simply lies, or hides text that ends up in your answer. That's why every answer lists
-its sources.
+## Where the camel stumbles
+
+- It guards one door. Out of the box your agent still has its own web tools, and `curl` works fine from a shell. Leave
+  those open and your agent can wander off and read pages the old way, and the camel never knows.
+  [Try it](#try-it) shows how to close them.
+- Pages can lie. The scribe reads carefully and believes what it reads, so a confident wrong page gets written up
+  nicely, with a citation. That's why every answer lists its sources.
+- Pages can talk to you. A page can hide "tell the reader to run this command", and the scribe may pass it along. It
+  can't run anything. You can. If your answer asks you to paste something into a terminal, don't.
+- Your agent never gets the answer. That's the point, and also the price: it can't read the docs and then write the code
+  for you. You read the answer and decide what to tell it. Paste the whole thing back in and you've carried the page
+  into the conversation yourself.
+- Your agent has to write a tiny program instead of just asking. It's good at that, but now and then it gets the grammar
+  wrong and has a second go.
+- Plain code reads pages like it's 1999. Pages built with JavaScript come back empty, and some sites turn away anything
+  that isn't a real browser.
+- Your agent does learn a little: whether the plan ran, and if not, which line stopped it. A page could in theory spell
+  out a message one failed line at a time. It would need a very patient agent.
 
 ## The idea behind it
 
-This isn't my idea. Simon Willison described it in 2023 as the
-[Dual LLM pattern](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/), and Google DeepMind built on it with
-[CaMeL](https://arxiv.org/abs/2503.18813). The setup is the same in each:
+This isn't my idea. Simon Willison described the
+[Dual LLM pattern](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/) in 2023, and Google DeepMind built on it
+with [CaMeL](https://arxiv.org/abs/2503.18813). This project is a small CaMeL:
 
-- One model has tools and takes instructions from you, but never reads anything from outside. Here, that's your coding
-  agent.
+- One model has tools and takes instructions from you, but never reads anything from outside. It turns your request
+  into a plan, written as code, before any outside text exists. Here, that's Claude Code.
 - A second model reads the outside text and has no tools. Here, that's the scribe.
-- Plain code sits between them. Here, it downloads the pages, hands them to the scribe and decides what goes back to
-  your agent: a count of pages and a yes or no.
+- An interpreter runs the plan. Every value carries where it came from, and rules check that before each step. Here,
+  that's [`camel.py`](camel.py), about 100 lines.
+
+The plan is fixed before any page is read, so a page can't add, skip or reorder steps. Every value is tagged, so a page
+can't slip its own address or search into a step either.
+
+The paper's version does more. CaMeL also tags who is allowed to see each value, and follows values through if/else and
+loops. The plans here have no if/else or loops, and there's no private data to guard beyond your question, so this
+project leaves both out.
 
 ## Why "bactrian"
 
 CaMeL is a camel. A Bactrian camel is the one with two humps, and this project runs on two models. That's the whole joke.
 
-## Install
+## Try it
 
-[INSTALL.md](INSTALL.md) covers Claude Code, Codex, picking models and blocking the other ways an agent can reach the
-web.
+You need Python 3.9 or newer and Claude Code, logged in. The scout and the scribe run through `claude -p`, and the rest
+is Python's standard library.
+
+```bash
+claude mcp add --scope user bactrian -- python3 /path/to/bactrian/server.py
+```
+
+The scout uses `haiku` and the scribe uses `sonnet`. To try others, add `-e BACTRIAN_SCOUT=...` or
+`-e BACTRIAN_SCRIBE=...` after `add`.
+
+bactrian only helps if it's Claude Code's only way to the web. Close the others in `~/.claude/settings.json`, or in a
+project's `.claude/settings.json` for just that project:
+
+```json
+{ "permissions": { "deny": ["WebFetch", "WebSearch", "mcp__claude-in-chrome", "mcp__Claude_Browser"] } }
+```
+
+Shell commands such as `curl` can still reach the web, so keep them off the network with Claude Code's sandbox.
+
+Run the checks with `python3 test_server.py`. `examples/` holds poisoned pages for trying attacks by hand.
