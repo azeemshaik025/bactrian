@@ -14,14 +14,6 @@ claude mcp add --scope user bactrian -- python3 /path/to/bactrian/server.py
 codex mcp add bactrian -- python3 /path/to/bactrian/server.py
 ```
 
-Codex asks before each MCP call, and `codex exec` refuses it. To allow `research`, add this to `~/.codex/config.toml`,
-and `tool_timeout_sec = 300` under `[mcp_servers.bactrian]`:
-
-```toml
-[mcp_servers.bactrian.tools.research]
-approval_mode = "approve"
-```
-
 ## Models
 
 The reader uses `sonnet` and the searcher `haiku`. Pick others with `BACTRIAN_READER` and `BACTRIAN_SEARCHER`, for

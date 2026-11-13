@@ -36,6 +36,8 @@ TOOL = {
         },
         "required": ["question"],
     },
+    # It reads the web and changes nothing, which also lets Codex run it without asking each time.
+    "annotations": {"readOnlyHint": True, "openWorldHint": True},
 }
 STYLE = """
 body { font: 17px/1.6 system-ui, sans-serif; max-width: 44rem; margin: 3rem auto; padding: 0 1rem;

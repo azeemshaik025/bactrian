@@ -172,6 +172,8 @@ def test_the_mcp_protocol():
     assert start["result"]["capabilities"] == {"tools": {}} and start["result"]["protocolVersion"] == "2025-06-18", start
     listed = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, call)
     assert [t["name"] for t in listed["result"]["tools"]] == ["research"], listed
+    # Codex runs read-only tools without asking, so users need no approval config.
+    assert listed["result"]["tools"][0]["annotations"]["readOnlyHint"] is True, listed
     answer = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                             "params": {"name": "research", "arguments": {"question": "q"}}}, call)
     assert answer["result"]["content"] == [{"type": "text", "text": "told the agent"}], answer
