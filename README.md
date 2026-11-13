@@ -25,9 +25,17 @@ does. I'd rather not depend on most of the time.
 
 This project makes sure your agent never reads the web at all.
 
-When your agent wants to look something up, it asks this tool a question. A small model, the scout, finds the pages.
-Another model, the scribe, reads them. The scribe has no tools: it can read, but it can't run anything or touch your
-files. Its answer opens in your browser, for you to read.
+Say you paste a link and ask your agent what the article says. Here's what happens:
+
+1. Your agent passes the link and your question to this tool. That's all it does.
+2. Plain code downloads the page. No model is involved.
+3. A second model, the scribe, reads the page. The scribe has no tools: it can read, but it can't run anything or touch
+   your files.
+4. The scribe's answer opens in your browser, for you to read.
+
+If you don't give a link, one step comes first: a small model, the scout, searches the web and hands back addresses. The
+scout can search and do nothing else, and only the addresses from its first search are used. From there it's the same
+path.
 
 Your agent never sees the pages or the answer. All it gets back is a short note: the answer is in your browser, this
 many pages were read, and yes or no, the question was answered.
@@ -50,8 +58,8 @@ This isn't my idea. Simon Willison described it in 2023 as the
 - One model has tools and takes instructions from you, but never reads anything from outside. Here, that's your coding
   agent.
 - A second model reads the outside text and has no tools. Here, that's the scribe.
-- Plain code sits between them and decides what gets through. Here, the only thing that goes back to your agent is a
-  count of pages and a yes or no.
+- Plain code sits between them. Here, it downloads the pages, hands them to the scribe and decides what goes back to
+  your agent: a count of pages and a yes or no.
 
 ## Why "bactrian"
 
