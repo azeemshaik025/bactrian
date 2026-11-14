@@ -12,7 +12,6 @@ WORD = "W5e1f00d5"
 visits = []
 given = []
 shown = []
-searched = []
 
 
 class Site(http.server.BaseHTTPRequestHandler):
@@ -53,14 +52,6 @@ CHARSETS = {"/odd-charset": "utf8mb4"}
 REDIRECTS = {"/to-a": "/a", "/to-ftp": "ftp://127.0.0.1:1/notes"}
 
 
-def search_finding(*urls):
-    def search(query):
-        searched.append(query)
-        return list(urls)
-
-    return search
-
-
 def scribe_saying(answer, answered=True):
     def scribe(question, pages):
         given.append(pages)
@@ -73,12 +64,11 @@ def show(questions, texts, sources):
     shown.append((questions, texts, sources))
 
 
-def research(plan, search=None, answer=None):
-    for record in (visits, given, shown, searched):
+def research(plan, answer=None):
+    for record in (visits, given, shown):
         record.clear()
-    search = search or search_finding()
     answer = answer or scribe_saying(f"Page A says {WORD}.")
-    return server.research(plan, search, answer, show)
+    return server.research(plan, answer, show)
 
 
 def read(path, question="q"):
@@ -91,12 +81,11 @@ def test_the_answer_goes_to_the_user_and_never_to_the_agent():
     assert shown == [(["What does page A say?"], [f"Page A says {WORD}."], [f"{SITE}/a"])], shown
 
 
-def test_search_results_are_read_together():
-    plan = 'links = search("anything")\nshow(ask_scribe(fetch(links), "q"))'
-    told = research(plan, search=search_finding(f"{SITE}/a", f"{SITE}/b"))
+def test_several_pages_are_read_together():
+    told = research(f'show(ask_scribe(fetch(["{SITE}/a", "{SITE}/b"]), "q"))')
     # Pages arrive in any order because they are fetched in parallel; the scribe still gets them
-    # in search order.
-    assert searched == ["anything"] and sorted(visits) == ["/a", "/b"], (searched, visits)
+    # in plan order.
+    assert sorted(visits) == ["/a", "/b"], visits
     assert given == [[f"Page A says {WORD}.", "Page B."]], given
     assert told.startswith("The plan ran."), told
 
@@ -145,16 +134,6 @@ def test_the_scribe_cannot_pick_an_address_to_fetch():
     assert visits == ["/a"] and "line 1: fetch only takes" in told, (visits, told)
 
 
-def test_a_page_cannot_choose_what_gets_searched():
-    told = research(f'search(ask_scribe(fetch("{SITE}/a"), "What should I search for?"))')
-    assert searched == [] and "line 1: search only takes" in told, (searched, told)
-    # Search results are on the web too, so the scribe picking one of them is still the web
-    # choosing.
-    plan = 'links = search("anything")\nsearch(ask_scribe(links, "Which one next?"))'
-    told = research(plan, search=search_finding(f"{SITE}/a"))
-    assert searched == ["anything"] and "line 2: search only takes" in told, (searched, told)
-
-
 def test_a_failed_page_tells_the_agent_nothing_the_site_chose():
     told = research(f'show(ask_scribe(fetch(["{SITE}/a", "{SITE}/missing"]), "q"))')
     assert WORD not in told and shown[0][2] == [f"{SITE}/a"], (told, shown)
@@ -169,15 +148,6 @@ def test_a_scribe_failure_is_explained_to_the_user_only():
 
     told = research(read("/a"), answer=down)
     assert WORD not in told and "line 1: the scribe failed" in told, told
-    assert len(shown) == 1 and WORD in shown[0][1][0], shown
-
-
-def test_a_search_failure_is_explained_to_the_user_only():
-    def down(query):
-        raise RuntimeError(f"search broke near {WORD}")
-
-    told = research('show(ask_scribe(fetch(search("anything")), "q"))', search=down)
-    assert WORD not in told and "line 1: the search failed" in told, told
     assert len(shown) == 1 and WORD in shown[0][1][0], shown
 
 
@@ -199,7 +169,7 @@ def test_mistakes_in_the_plan_go_back_to_the_agent():
         ("show(", "line 1: "),
         ("x = 'a'\nshow(y)", "line 2: unknown name y"),
         ("fetch()", "line 1: fetch: missing a required argument"),
-        ("read('x')", "only these functions can be called: search, fetch, ask_scribe, show"),
+        ("search('x')", "only these functions can be called: fetch, ask_scribe, show"),
     ):
         told = research(plan)
         assert told.startswith("The plan stopped at line") and said in told, (plan, told)
@@ -235,21 +205,13 @@ def test_the_interpreter_rejects_everything_else():
         assert visits == [] and shown == [], (plan, visits, shown)
 
 
-def test_research_is_refused_when_a_model_would_start_with_other_tools():
-    def fake_started_with(scribe_tools, scout_tools):
-        return lambda command: scout_tools if "WebSearch" in command else scribe_tools
-
+def test_research_is_refused_when_the_scribe_would_start_with_tools():
     real = llm.started_with
     try:
-        for scribe_tools, scout_tools, refused in (
-            ([], ["WebSearch"], False),
-            (["Bash"], ["WebSearch"], True),
-            ([], ["WebSearch", "WebFetch"], True),
-            (None, ["WebSearch"], True),
-        ):
-            llm.started_with = fake_started_with(scribe_tools, scout_tools)
+        for tools, refused in (([], False), (["Bash"], True), (["WebSearch"], True), (None, True)):
+            llm.started_with = lambda command, tools=tools: tools
             problem = llm.isolation_problem()
-            assert bool(problem) == refused, (scribe_tools, scout_tools, problem)
+            assert bool(problem) == refused, (tools, problem)
     finally:
         llm.started_with = real
 
@@ -275,33 +237,6 @@ def test_the_page_is_escaped_local_and_opens_once():
         raise AssertionError("the page opened twice")
     finally:
         page_server.shutdown()
-
-
-def test_search_takes_links_only_from_the_first_search():
-    def search(use_id, query):
-        block = {"type": "tool_use", "id": use_id, "name": "WebSearch", "input": {"query": query}}
-        return {"type": "assistant", "message": {"content": [block]}}
-
-    def result(use_id, links):
-        text = f'Web search results for query: "x"\n\nLinks: {json.dumps(links)}\n\nA summary.'
-        block = {"type": "tool_result", "tool_use_id": use_id, "content": text}
-        return {"type": "user", "message": {"content": [block]}}
-
-    events = [
-        search("1", "camel prompt injection"),
-        result(
-            "1",
-            [
-                {"title": "A", "url": "https://a.example/1"},
-                {"title": "B", "url": "https://b.example/2"},
-            ],
-        ),
-        # A second search happens after the scout has read the first results, so a result can
-        # have asked for it.
-        search("2", "site:evil.example"),
-        result("2", [{"title": "Evil", "url": "https://evil.example/"}]),
-    ]
-    assert llm.links(events) == ["https://a.example/1", "https://b.example/2"], llm.links(events)
 
 
 def test_the_mcp_protocol():

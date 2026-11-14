@@ -1,8 +1,8 @@
 """An MCP server that runs your agent's research plan the CaMeL way and shows the results to you.
 
 The agent writes a short plan as code. The interpreter runs it: plain code downloads pages, the
-scout searches and the scribe reads, and whatever the plan shows opens in your browser from a page
-that works once. The agent gets back only whether the plan ran, or the line where it stopped.
+scribe reads them, and whatever the plan shows opens in your browser from a page that works once.
+The agent gets back only whether the plan ran, or the line where it stopped.
 """
 
 from __future__ import annotations
@@ -24,30 +24,27 @@ import pages
 from camel import USER, Interpreter, PlanError, PolicyError, Tagged, ToolError
 
 MAX_PAGES = 5
-FOUND = frozenset({"search"})
 WEB = frozenset({"web"})
 DESCRIPTION = """\
-Research the web for the user by writing a short plan. A separate model with no tools reads the
-pages, and whatever the plan shows opens in the user's browser. You never see search results,
-pages or answers: you get back only whether the plan ran, or the line where it stopped and why.
-Use this instead of fetching web pages yourself, and don't ask the user to paste the answer back.
+Read web pages for the user by writing a short plan. A separate model with no tools reads the
+pages, and whatever the plan shows opens in the user's browser. You never see the pages or the
+answers: you get back only whether the plan ran, or the line where it stopped and why. Use this
+instead of fetching web pages yourself, and don't ask the user to paste the answer back.
 
 The plan is a small subset of Python. Statements: assignment to one name, and bare calls.
 Expressions: string constants, names, list literals and calls. Nothing else exists: no imports,
 if, loops, operators, f-strings, attributes, indexing or keyword arguments.
 
 Functions:
-  search(query)                web addresses for a query written in the plan
   fetch(urls)                  the text of up to 5 pages, from an address or a list of addresses
-                               written in the plan or returned by search
+                               written in the plan
   ask_scribe(pages, question)  the scribe's answer to the question, from those pages
   show(text)                   puts text on the user's page
 
-When the user gave page addresses, fetch them and skip search. For example:
+There is no search: write addresses the user gave, or ones you already know. For example:
 
-links = search("deepmind camel prompt injection")
-pages = fetch(links)
-show(ask_scribe(pages, "How does CaMeL stop prompt injection?"))"""
+pages = fetch("https://simonwillison.net/2023/Apr/25/dual-llm-pattern/")
+show(ask_scribe(pages, "What is the Dual LLM pattern?"))"""
 TOOL = {
     "name": "research",
     "description": DESCRIPTION,
@@ -73,19 +70,13 @@ a { color: #0969da; word-break: break-all; }
 """
 
 
-def written_in_the_plan(query: Tagged) -> None:
-    if query.sources != USER or not isinstance(query.value, str):
-        raise PolicyError("search only takes one query written in the plan")
+def written_in_the_plan(urls: Tagged) -> None:
+    # A page, or the scribe's answer about one, can name any address.
+    if not urls.sources <= USER:
+        raise PolicyError("fetch only takes addresses written in the plan")
 
 
-def written_or_found(urls: Tagged) -> None:
-    # A page, or the scribe's answer about one, can name any address. Search results come from
-    # the scout's first search, which runs before it has read anything.
-    if not urls.sources <= USER | FOUND:
-        raise PolicyError("fetch only takes addresses written in the plan or found by search")
-
-
-POLICIES = {"search": [written_in_the_plan], "fetch": [written_or_found]}
+POLICIES = {"fetch": [written_in_the_plan]}
 
 
 def flat(value: object) -> list:
@@ -104,21 +95,13 @@ def fetch_text(url: str) -> str | None:
 
 def research(
     plan: str,
-    search: Callable[[str], list[str]],
     answer: Callable[[str, list[str]], dict],
     show: Callable[[list[str], list[str], list[str]], None],
 ) -> str:
-    """Run one plan and return the only text the agent gets: never search results or page text."""
+    """Run one plan and return the only text the agent gets: never page text."""
     questions: list[str] = []
     texts: list[str] = []
     sources: list[str] = []
-
-    def search_tool(query: Tagged) -> Tagged:
-        try:
-            return Tagged(search(query.value), FOUND)
-        except RuntimeError as failed:
-            texts.append(f"The search failed: {failed}")
-            raise ToolError("the search failed") from None
 
     def fetch(urls: Tagged) -> Tagged:
         wanted = [url for url in dict.fromkeys(flat(urls.value)) if pages.is_web_address(url)]
@@ -146,7 +129,7 @@ def research(
         texts.append("\n\n".join(map(str, flat(text.value))))
         return Tagged(None, USER)
 
-    tools = {"search": search_tool, "fetch": fetch, "ask_scribe": ask_scribe, "show": show_text}
+    tools = {"fetch": fetch, "ask_scribe": ask_scribe, "show": show_text}
     try:
         Interpreter(tools, POLICIES).run(plan)
         told = "The plan ran."
@@ -264,7 +247,7 @@ def main() -> None:
     def call(arguments: dict) -> str:
         # Checked every call: a Claude Code update can change what the models start with.
         plan = str(arguments.get("plan", ""))
-        return llm.isolation_problem() or research(plan, llm.search, llm.answer, show)
+        return llm.isolation_problem() or research(plan, llm.answer, show)
 
     for line in sys.stdin:
         if line.strip():

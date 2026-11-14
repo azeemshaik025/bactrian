@@ -40,18 +40,12 @@ Say you paste a link and ask your agent what the article says. Here's what happe
    your files.
 4. `show` puts the scribe's answer on a page in your browser, for you to read.
 
-If you don't give a link, the plan starts with `search`: a small model, the scout, searches the web and hands back
-addresses. The scout can search and do nothing else, and only the addresses from its first search are used.
+Your agent never sees the page or the answer. All it gets back is whether the plan ran, or which line stopped it and
+why, such as "line 1: no page could be read".
 
-Your agent never sees the pages, the search results or the answer. All it gets back is whether the plan ran, or which
-line stopped it and why, such as "line 1: no page could be read".
-
-Every value in the plan remembers where it came from: written by your agent, found by the search, or read from a page.
-Before each step, two rules check that:
-
-- `fetch` only opens addresses your agent wrote or the search found. A page that says "now go read this other page" gets
-  nowhere, and neither does the scribe repeating it.
-- `search` only takes a query your agent wrote, so a page can't choose what gets searched.
+Every value in the plan remembers where it came from: written by your agent, or read from a page. Before each step, a
+rule checks that: `fetch` only opens addresses your agent wrote. A page that says "now go read this other page" gets
+nowhere, and neither does the scribe repeating it.
 
 A page read this way can't make your agent do anything, because your agent never reads it.
 
@@ -72,6 +66,8 @@ Claude Code update, it stops instead of carrying on.
   into the conversation yourself.
 - Your agent has to write a tiny program instead of just asking. It's good at that, but now and then it gets the grammar
   wrong and has a second go.
+- It doesn't search. Your agent has to name the page, so "the latest article on Medium" gets you a shrug. Every
+  address in a plan is one you or your agent wrote, and that's the point.
 - Plain code reads pages like it's 1999. Pages built with JavaScript come back empty, and some sites turn away anything
   that isn't a real browser.
 - Your agent does learn a little: whether the plan ran, and if not, which line stopped it. A page could in theory spell
@@ -90,7 +86,7 @@ with [CaMeL](https://arxiv.org/abs/2503.18813). This project is a small CaMeL:
   that's [`camel.py`](camel.py), about 100 lines.
 
 The plan is fixed before any page is read, so a page can't add, skip or reorder steps. Every value is tagged, so a page
-can't slip its own address or search into a step either.
+can't slip its own address into a step either.
 
 The paper's version does more. CaMeL also tags who is allowed to see each value, and follows values through if/else and
 loops. The plans here have no if/else or loops, and there's no private data to guard beyond your question, so this
@@ -102,15 +98,14 @@ CaMeL is a camel. A Bactrian camel is the one with two humps, and this project r
 
 ## Try it
 
-You need Python 3.9 or newer and Claude Code, logged in. The scout and the scribe run through `claude -p`, and the rest
-is Python's standard library.
+You need Python 3.9 or newer and Claude Code, logged in. The scribe runs through `claude -p`, and the rest is Python's
+standard library.
 
 ```bash
 claude mcp add --scope user bactrian -- python3 /path/to/bactrian/server.py
 ```
 
-The scout uses `haiku` and the scribe uses `sonnet`. To try others, add `-e BACTRIAN_SCOUT=...` or
-`-e BACTRIAN_SCRIBE=...` after `add`.
+The scribe uses `sonnet`. To try another model, add `-e BACTRIAN_SCRIBE=...` after `add`.
 
 bactrian only helps if it's Claude Code's only way to the web. Close the others in `~/.claude/settings.json`, or in a
 project's `.claude/settings.json` for just that project:
