@@ -251,6 +251,9 @@ def test_the_mcp_protocol():
     start = request(1, "initialize", {"protocolVersion": "2025-06-18"})
     assert start["result"]["protocolVersion"] == "2025-06-18", start
     assert start["result"]["capabilities"] == {"tools": {}}, start
+    # Claude Code shows these before it loads the tool itself, which is how a plain "summarise
+    # this page" finds bactrian.
+    assert "research tool" in start["result"]["instructions"], start
     tools = request(2, "tools/list")["result"]["tools"]
     assert [tool["name"] for tool in tools] == ["research"], tools
     assert tools[0]["inputSchema"]["required"] == ["plan"], tools

@@ -45,6 +45,11 @@ There is no search: write addresses the user gave, or ones you already know. For
 
 pages = fetch("https://simonwillison.net/2023/Apr/25/dual-llm-pattern/")
 show(ask_scribe(pages, "What is the Dual LLM pattern?"))"""
+INSTRUCTIONS = (
+    "Whenever the user asks what a web page says, asks you to summarise one, or wants anything "
+    "looked up on one, use the research tool, not any other way of reading the web. You won't "
+    "see the page or the answer: it opens in the user's browser."
+)
 TOOL = {
     "name": "research",
     "description": DESCRIPTION,
@@ -208,6 +213,7 @@ def handle(message: dict, call: Callable[[dict], str]) -> dict | None:
             "protocolVersion": version,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "bactrian", "version": "0.1.0"},
+            "instructions": INSTRUCTIONS,
         }
     elif method == "ping":
         result = {}
