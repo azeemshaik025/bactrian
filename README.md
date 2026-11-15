@@ -15,8 +15,8 @@ this command". You won't see it. The model will. This is called prompt injection
 The agent reading that forum post is the same agent that can run commands on your machine, edit your code and push to
 GitHub.
 
-I checked my own Claude Code history. Of the 120 sessions where the agent read something from the web, 75 went on to
-run commands or edit files in that same session.
+I checked my own Claude Code history from August 7 to November 15, 2026. Of the 75 sessions where the agent, or a
+subagent it started, read something from the web, 58 went on to run commands or edit files in that same session.
 
 Unless you read and approve every command yourself, what protects you is the model noticing the trick and choosing to
 ignore it. Most of the time it does. I'd rather not depend on most of the time.
