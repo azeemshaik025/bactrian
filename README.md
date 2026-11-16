@@ -114,6 +114,7 @@ project's `.claude/settings.json` for just that project:
 { "permissions": { "deny": ["WebFetch", "WebSearch", "mcp__claude-in-chrome", "mcp__Claude_Browser"] } }
 ```
 
-Shell commands such as `curl` can still reach the web, so keep them off the network with Claude Code's sandbox.
+The shell is another way to the web, through `curl` for example. In the project where I do research, I add `"Bash"`
+to that list as well.
 
 Run the checks with `python3 test_server.py`. `examples/` holds poisoned pages for trying attacks by hand.
